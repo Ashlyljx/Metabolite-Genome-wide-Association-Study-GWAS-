@@ -1,0 +1,459 @@
+---
+title: "Manhattan Plots"
+author: "Emma Bilbrey, Jessica Cooperstone, Ashli"
+date: "a lot of different times"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Introduction
+
+In this RMarkdown, we will be making Manhattan plots as a way of visualizing data from a metabolite genome wide association study (mGWAS) conducted by Emma Bilbrey in apple. The SNP data is from a 20K array, and the metabolite data here is from a semi-polar extract of apple, and collected on a QTOF in negative ionization mode. The metabolites are annotated in columns as m/z\_retention time. In each cell is a -log10 p-value. Only metabolites that have at least one significant association with at least one SNP are included here.
+
+In the data file you will read in, SNPs are rows and metabolites are columns, and -log10 pvalues are in each cell.
+
+There are also three meta-data columns, `Index` which gives us as identifier for the SNP, `Linkage_Group` which tells us the chromosome, and `Genetic_Distance`
+
+## Load libraries
+
+```{r}
+library(tidyverse)
+library(ggrepel) # for repelling text labels
+library(here)
+```
+
+Other libraries that may be useful to you, [`qqman`](https://www.r-project.org/nosvn/pandoc/qqman.html) and [`karyoploteR`](https://bioconductor.org/packages/release/bioc/html/karyoploteR.html) but I will not cover here.
+
+```{r, eval = FALSE}
+install.packages("qqman")
+library(qqman) # another package for generating manhattan plots although we won't go over this
+
+if (!requireNamespace("BiocManager", quietly = TRUE))
+    install.packages("BiocManager")
+
+BiocManager::install("karyoploteR")
+library(karyoploteR) # enables comparison of multiple manhattan plots
+```
+
+## Read in data
+
+```{r}
+neg <- read_csv("NegAllSub726subsetPVAL_030920.csv")
+
+# look at data quickly
+neg[1:10,1:10]
+
+# check dimensions
+dim(neg)
+```
+
+# Start plotting
+
+Let's first start by making a Manhattan plot for chlorogenic acid, which is `X353.09194_2.23795`
+
+```{r}
+neg %>%
+  ggplot(aes(x = Index, y = X353.09194_2.23795)) +
+  geom_point()
+```
+
+Ok! We've barely done anything and already we have kind of a Manhattan plot! But our x-axis has each SNP, but is not divided by chromosome, which is what we want. Let's work on this.
+
+```{r}
+# how many chromosomes do we have?
+nCHR <- length(unique(neg$Linkage_Group))
+nCHR
+```
+
+# Labeling chromosomes on the x-axis
+
+What if we color by `Linkage_Group`?
+
+```{r}
+neg %>%
+  ggplot(aes(x = Index, y = X353.09194_2.23795, color = Linkage_Group)) +
+  geom_point() 
+```
+
+Its treating `Linkage_Group` like a continuous variable (which it is not). Let's fix that.
+
+```{r}
+# treat as factor only in your plot
+neg %>%
+  ggplot(aes(x = Index, y = X353.09194_2.23795, color = as.factor(Linkage_Group))) +
+  geom_point()
+
+# set as factor within the df
+neg$Linkage_Group <- as.factor(neg$Linkage_Group)
+```
+
+Ok now we can see which `Index` belongs to which `Linkage_Group` (i.e., chromosome), but this still isn't really what we want. We want the x-axis to be labeled with chromosome, so we will need to do some data wrangling.
+
+Let's create a new df which will have breaks and label information we can use in our plot.
+
+```{r}
+set_axis <- neg %>%
+  group_by(Linkage_Group) %>%
+  summarize(min = min(Index),
+            max = max(Index),
+            center = (max - min)/2)
+```
+
+Now plot using new breaks and labels for the x-axis
+
+```{r}
+neg %>%
+  ggplot(aes(x = Index, y = X353.09194_2.23795, color = Linkage_Group)) +
+  geom_point() +
+  scale_x_continuous(breaks = (set_axis$center + set_axis$min), 
+                     labels = set_axis$Linkage_Group)
+```
+
+Ok! Looking better!Now we can easily tell which points belong to which chromosome, but probably what we want is to alternate between two colors by chromosome.
+
+# Alternate colors by chromosome
+
+We don't really need a rainbow of colors for our chromosomes, let's code to alternate the colors by chromosome between black and gray.
+
+```{r}
+neg %>%
+  ggplot(aes(x = Index, y = X353.09194_2.23795, color = Linkage_Group)) +
+  geom_point() +
+  scale_x_continuous(breaks = (set_axis$center + set_axis$min), 
+                     labels = set_axis$Linkage_Group) +
+  scale_color_manual(values = rep(c("black", "gray"),17))
+```
+
+We are alternating!
+
+# Remove the legend, fix axis labels
+
+```{r}
+neg %>%
+  ggplot(aes(x = Index, y = X353.09194_2.23795, color = Linkage_Group)) +
+  geom_point() +
+  scale_x_continuous(breaks = (set_axis$center + set_axis$min), 
+                     labels = set_axis$Linkage_Group) +
+  scale_color_manual(values = rep(c("black", "gray"),17)) +
+  labs(x = "Chromosome",
+       y = expression("-log"[10]* "P-Value"),
+       title = "Chlorogenic Acid") +
+  theme_classic() +
+  theme(legend.position = "none",
+        plot.title = element_text(hjust = 0.5))
+```
+
+Pretty nice!
+
+# Get rid of gap in beginning of x-axis
+
+```{r}
+neg %>%
+  ggplot(aes(x = Index, y = X353.09194_2.23795, color = Linkage_Group)) +
+  geom_point() +
+  scale_x_continuous(expand = c(0,0),
+                     breaks = (set_axis$center + set_axis$min), 
+                     labels = set_axis$Linkage_Group) +
+  scale_color_manual(values = rep(c("black", "gray"),17)) +
+  labs(x = "Chromosome",
+       y = expression("-log"[10]* "P-Value"),
+       title = "Chlorogenic Acid") +
+  theme_classic() +
+  theme(legend.position = "none",
+        plot.title = element_text(hjust = 0.5))
+```
+
+# Add p-value cutoff line
+
+Let's add a horizontal line at the -log10 p-value we are considering significant.
+
+```{r}
+neg %>%
+  ggplot(aes(x = Index, y = X353.09194_2.23795, color = Linkage_Group)) +
+  geom_point() +
+  geom_hline(yintercept = 5, color = "grey", linetype= "dashed") +
+  scale_x_continuous(expand = c(0,0),
+                     breaks = (set_axis$center + set_axis$min), 
+                     labels = set_axis$Linkage_Group) +
+  scale_color_manual(values = rep(c("black", "gray"), 17)) +
+  labs(x = "Chromosome",
+       y = expression("-log"[10]* "P-Value"),
+       title = "Chlorogenic Acid") +
+  theme_classic() +
+  theme(legend.position = "none",
+        plot.title = element_text(hjust = 0.5))
+
+```
+
+# Coloring very significant points
+
+What if we want to color differently the SNPs that have a -log10 p-value above 5?
+
+```{r}
+# select all SNPs with -log10 pvalue > 5 for chlorogenic acid
+neg_really_sig <- neg %>%
+  filter(X353.09194_2.23795 > 5)
+
+neg %>%
+  ggplot(aes(x = Index, y = X353.09194_2.23795, color = Linkage_Group)) +
+  geom_point() +
+  geom_point(data = neg_really_sig, aes(x = Index, y = X353.09194_2.23795),
+                                 color = "red") +
+  geom_hline(yintercept = 5, color = "grey", linetype= "dashed") +
+  scale_x_continuous(expand = c(0,0),
+                     breaks = (set_axis$center + set_axis$min), 
+                     labels = set_axis$Linkage_Group) +
+  scale_color_manual(values = rep(c("black", "gray"),17)) +
+  labs(x = "Chromosome",
+       y = expression("-log"[10]* "P-Value"),
+       title = "Chlorogenic Acid") +
+  theme_classic() +
+  theme(legend.position = "none",
+        plot.title = element_text(hjust = 0.5))
+```
+
+# Looking at one chromosome
+
+Why don't we take a closer look at chromosome 17?
+
+```{r}
+# select only Linkage_Group = 17
+neg_17 <- neg %>%
+  filter(Linkage_Group == 17)
+
+neg_17 %>%
+  ggplot(aes(x = Genetic_Distance, y = X353.09194_2.23795, color = X353.09194_2.23795 > 5)) +
+  geom_point() +
+  geom_hline(yintercept = 5, color = "grey", linetype= "dashed") +
+  scale_x_continuous(expand = c(0,0)) +
+  scale_color_manual(values = c("black", "red")) +
+  labs(x = "Genetic Distance",
+       y = expression("-log"[10]* "P-Value"),
+       title = "Chlorogenic Acid, Chromosome 17") +
+  theme_classic() +
+  theme(legend.position = "none",
+        plot.title = element_text(hjust = 0.5))
+```
+
+# Labelling certain points
+
+Label the points that are have a -log10 p-value \> 5.
+
+```{r}
+neg_17 %>%
+  ggplot(aes(x = Genetic_Distance, y = X353.09194_2.23795, color = X353.09194_2.23795 > 5)) +
+  geom_point() +
+  geom_hline(yintercept = 5, color = "grey", linetype= "dashed") +
+  scale_x_continuous(expand = c(0,0)) +
+  scale_color_manual(values = c("black", "red")) +
+  geom_text(data = neg_really_sig, aes(label = Index), size = 3) +
+  labs(x = "Genetic Distance",
+       y = expression("-log"[10]* "P-Value"),
+       title = "Chlorogenic Acid, Chromosome 17") +
+  theme_classic() +
+  theme(legend.position = "none",
+        plot.title = element_text(hjust = 0.5))
+```
+
+Oh those labels look really bad.
+
+Repel text using `geom_text_repel`
+
+```{r}
+neg_17 %>%
+  ggplot(aes(x = Genetic_Distance, y = X353.09194_2.23795, color = X353.09194_2.23795 > 5)) +
+  geom_point() +
+  geom_hline(yintercept = 5, color = "grey", linetype= "dashed") +
+  scale_x_continuous(expand = c(0,0)) +
+  scale_color_manual(values = c("black", "red")) +
+  geom_text_repel(data = neg_really_sig, aes(label = Index),
+                  size = 3) +
+  labs(x = "Genetic Distance",
+       y = "-log10 P-Value",
+       title = "Chlorogenic Acid, Chromosome 17") +
+  theme_classic() +
+  theme(legend.position = "none",
+        plot.title = element_text(hjust = 0.5))
+```
+
+Showing you `geom_label_repel()`
+
+```{r}
+neg_17 %>%
+  ggplot(aes(x = Genetic_Distance, y = X353.09194_2.23795, color = X353.09194_2.23795 > 5)) +
+  geom_point() +
+  geom_hline(yintercept = 5, color = "grey", linetype= "dashed") +
+  scale_x_continuous(expand = c(0,0)) +
+  scale_color_manual(values = c("black", "red")) +
+  geom_label_repel(data = neg_really_sig, aes(label = Index),
+                  size = 3) +
+  labs(x = "Genetic Distance",
+       y = expression("-log"[10]* "P-Value"),
+       title = "Chlorogenic Acid, Chromosome 17") +
+  theme_classic() +
+  theme(legend.position = "none",
+        plot.title = element_text(hjust = 0.5))
+```
+
+# Making multiple Manhattan plots at once
+
+What if you had 10 traits, and you wanted to make Manhattan plots to visualize your GWAS all at once? Or in this case, what if we wanted to look at Manhattan plots for the 10 metabolites that have the most significant p-values across all SNPs?
+
+To do this quickly, we need to go from wide to tidy data/
+
+## Wide to long
+
+```{r}
+neg_tidy <- neg %>%
+  pivot_longer(cols = 4:ncol(.),
+               names_to = "Feature",
+               values_to = "PValueNegLog10")
+
+head(neg_tidy)
+```
+
+## Sort by pval
+
+Now we want to sort by `PValueNegLog10`
+
+```{r}
+neg_tidy_arranged <- neg_tidy %>%
+  arrange(-PValueNegLog10)
+
+head(neg_tidy_arranged)
+```
+
+## Select features of interest
+
+Pick the 10 features with the most significant p-values
+
+```{r}
+neg_tidy_arranged_selection <- neg_tidy_arranged[1:10,]
+
+neg_tidy_arranged_selection
+```
+
+We can actually see that the feature with the 8th and 9th most significant p-values is the same feature associated with two nearby SNPs. Let's grab one more feature then
+
+```{r}
+neg_tidy_arranged_selection <- neg_tidy_arranged[1:11,]
+
+neg_tidy_arranged_selection
+```
+
+## Select list of important features
+
+```{r}
+sig_features <- unique(neg_tidy_arranged_selection$Feature)
+
+sig_features
+
+# how many features do we have
+length(sig_features)
+```
+
+## Create a new df with only important features
+
+```{r}
+neg_sig_features <- neg_tidy %>%
+  filter(Feature %in% sig_features)
+
+unique(neg_sig_features$Feature) # ok our lists match!
+```
+
+## Plot
+
+```{r fig.width = 6, fig.height = 10}
+neg_sig_features %>%
+  ggplot(aes(x = Index, y = PValueNegLog10, color = Linkage_Group)) +
+  geom_point() +
+  geom_hline(yintercept = 5, color = "grey", linetype= "dashed") +
+  scale_x_continuous(expand = c(0,0),
+                     breaks = (set_axis$center + set_axis$min), 
+                     labels = set_axis$Linkage_Group) +
+  scale_color_manual(values = rep(c("black", "gray"), 17)) +
+  labs(x = "Chromosome",
+       y = expression("-log"[10]* "P-Value")) +
+  theme_classic() +
+  theme(legend.position = "none",
+        plot.title = element_text(hjust = 0.5)) +
+  facet_wrap(~Feature, nrow = 5)
+```
+
+# Making many Manhattan Plots using lapply()
+`aes_()` and `aes_string()` allow you to define your aesthetic mappings programmatically.  You can learn more at the reference [guide](https://ggplot2.tidyverse.org/reference/aes_.html).
+
+Based on some help I found here:
+https://lorenzwalthert.github.io/proggplotI/
+https://rpubs.com/paul4forest/ggplot_lapply 
+
+Refining our wide data.
+```{r}
+# from wide data, grab only columns that are a part of our sig_features
+neg_sig_wide <- neg[, names(neg) %in% sig_features]
+
+# get back metadata
+neg_metadata <- neg[,1:3]
+
+# bind metadata to sig features
+neg_sig_metadata_wide <- bind_cols(neg_metadata, neg_sig_wide)
+
+dim(neg_sig_metadata_wide)  
+```
+
+```{r}
+manhattanplots <- function(g){
+neg_sig_metadata_wide %>%
+  ggplot(aes(x = Index, color = Linkage_Group)) +
+  geom_point(aes_(y =  as.name(g))) +
+  geom_hline(yintercept = 5, color = "grey", linetype= "dashed") +
+  scale_x_continuous(expand = c(0,0),
+                     breaks = (set_axis$center + set_axis$min), 
+                     labels = set_axis$Linkage_Group) +
+  scale_color_manual(values = rep(c("black", "gray"),17)) +
+  labs(x = "Chromosome",
+       y = expression("-log"[10]* "P-Value"),
+       title = paste(g)) +
+  theme_classic() +
+  theme(legend.position = "none",
+        plot.title = element_text(hjust = 0.5))
+}  
+
+lapply(names(neg_sig_metadata_wide[,4:13]), manhattanplots)
+```
+
+Also works using `aes_string()`
+```{r}
+manhattanplots <- function(g){
+neg_sig_metadata_wide %>%
+  ggplot(aes(x = Index, y = as.name(g), color = Linkage_Group)) +
+  geom_point(aes_string(x = neg_sig_metadata_wide$Index, y = as.name(g))) +
+  geom_hline(yintercept = 5, color = "grey", linetype= "dashed") +
+  scale_x_continuous(expand = c(0,0),
+                     breaks = (set_axis$center + set_axis$min), 
+                     labels = set_axis$Linkage_Group) +
+  scale_color_manual(values = rep(c("black", "gray"),17)) +
+  labs(x = "Chromosome",
+       y = expression("-log"[10]* "P-Value"),
+       title = paste(g)) +
+  theme_classic() +
+  theme(legend.position = "none",
+        plot.title = element_text(hjust = 0.5))
+}  
+
+plots_aes_string <- lapply(names(neg_sig_metadata_wide[,4:13]), manhattanplots)
+
+plots_aes_string
+```
+
+Saving all the Manhattan plots into a pdf
+```{r}
+library(ggpubr)
+ggexport(plots_aes_string, 
+         filename = "Top10ManhattanPlots_neg.pdf")
+```
+
+
