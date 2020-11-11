@@ -1,6 +1,6 @@
 ---
 title: "Manhattan Plots"
-author: "Emma Bilbrey, Jessica Cooperstone, Ashli"
+author: "Emma Bilbrey, Jessica Cooperstone, Jiaxuan Li"
 date: "a lot of different times"
 output: html_document
 ---
